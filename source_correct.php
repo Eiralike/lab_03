@@ -6,40 +6,83 @@ if (!isset($_SESSION['login_attempts'])) {
     $_SESSION['login_attempts'] = 0; // Инициализируем счетчик попыток
 }
 
+// Параметры блокировки
+$total_failed_login = 3; // Максимальное количество неудачных попыток
+$lockout_time = 15; // Время блокировки в минутах
+$account_locked = false;
+
 // Проверяем, заблокирован ли пользователь
-if ($_SESSION['login_attempts'] >= 3) {
-    die("<p>Вы заблокированы после 3 неудачных попыток входа. Пожалуйста, попробуйте позже.</p>");
+if ($_SESSION['login_attempts'] >= $total_failed_login) {
+    // Проверяем время блокировки
+    if (isset($_SESSION['lockout_time'])) {
+        $timeout = $_SESSION['lockout_time'] + ($lockout_time * 60);
+        if (time() < $timeout) {
+            $account_locked = true; // Пользователь заблокирован
+        } else {
+            // Сбрасываем блокировку
+            unset($_SESSION['lockout_time']);
+            $_SESSION['login_attempts'] = 0; // Сбрасываем счетчик попыток
+        }
+    } else {
+        // Устанавливаем время блокировки
+        $_SESSION['lockout_time'] = time();
+        $account_locked = true; // Пользователь заблокирован
+    }
 }
 
-if (isset($_GET['Login'])) {
-    // Получаем имя пользователя
-    $user = $_GET['username'];
-    // Получаем пароль
-    $pass = $_GET['password'];
-    $pass = md5($pass);
-    
-    // Проверяем базу данных
-    $query = "SELECT * FROM `users` WHERE user = '$user' AND password = '$pass';";
-    $result = mysqli_query($GLOBALS["___mysqli_ston"], $query) or die('<pre>' . ((is_object($GLOBALS["___mysqli_ston"])) ? mysqli_error($GLOBALS["___mysqli_ston"]) : (($___mysqli_res = mysqli_connect_error()) ? $___mysqli_res : false)) . '</pre>');
+if (isset($_POST['Login']) && isset($_POST['username']) && isset($_POST['password'])) {
+    // Проверяем, заблокирован ли пользователь
+    if ($account_locked) {
+        die("<p>Вы заблокированы после 3 неудачных попыток входа. Пожалуйста, попробуйте позже.</p>");
+    }
 
-    if ($result && mysqli_num_rows($result) == 1) {
+    // Получаем имя пользователя
+    $user = $_POST['username'];
+    $user = stripslashes($user);
+    $user = mysqli_real_escape_string($db, $user); // Используем $db для mysqli_real_escape_string
+
+    // Получаем пароль
+    $pass = $_POST['password'];
+    $pass = stripslashes($pass);
+    $pass = mysqli_real_escape_string($db, $pass); // Используем $db для mysqli_real_escape_string
+    $pass = md5($pass); // Хешируем пароль
+
+    // Проверяем базу данных (если имя пользователя совпадает с паролем)
+    $data = $db->prepare('SELECT * FROM users WHERE user = :user AND password = :password LIMIT 1;');
+    $data->bindParam(':user', $user, PDO::PARAM_STR);
+    $data->bindParam(':password', $pass, PDO::PARAM_STR);
+    $data->execute();
+    $row = $data->fetch(PDO::FETCH_ASSOC); // Получаем данные в виде ассоциативного массива
+
+    // Если вход успешен
+    if ($data->rowCount() == 1) {
         // Получаем данные пользователя
-        $row = mysqli_fetch_assoc($result);
-        $avatar = $row["avatar"];
-        
+        $avatar = $row['avatar'];
+
         // Успешный вход
-        $html .= "<p>Welcome to the password protected area {$user}</p>";
-        $html .= "<img src=\"{$avatar}\" />";
-        
-        // Сбрасываем счетчик попыток
+        echo "<p>Добро пожаловать в защищенную область <em>{$user}</em></p>";
+        echo "<img src=\"{$avatar}\" />";
+
+        // Сбрасываем счетчик неудачных попыток
         $_SESSION['login_attempts'] = 0;
+        unset($_SESSION['lockout_time']); // Удаляем время блокировки, если оно есть
     } else {
         // Неудачный вход
         $_SESSION['login_attempts']++; // Увеличиваем счетчик неудачных попыток
-        $html .= "<pre><br />Username and/or password incorrect.</pre>";
+
+        // Если достигнуто максимальное количество попыток
+        if ($_SESSION['login_attempts'] >= $total_failed_login) {
+            $_SESSION['lockout_time'] = time(); // Устанавливаем время блокировки
+            echo "<pre><br />Имя пользователя и/или пароль неверны. Вы заблокированы после 3 неудачных попыток входа.</pre>";
+        } else {
+            echo "<pre><br />Имя пользователя и/или пароль неверны.</pre>";
+        }
     }
-    
-    ((is_null($___mysqli_res = mysqli_close($GLOBALS["___mysqli_ston"])) ? false : $___mysqli_res));
+
+    // Устанавливаем время последнего входа
+    $data = $db->prepare('UPDATE users SET last_login = NOW() WHERE user = :user LIMIT 1;');
+    $data->bindParam(':user', $user, PDO::PARAM_STR);
+    $data->execute();
 }
 ?>
 
